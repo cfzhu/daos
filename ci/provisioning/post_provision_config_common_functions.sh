@@ -176,8 +176,13 @@ pr_repos() {
 }
 
 rpm_test_version() {
+    if [ -n "$CI_RPM_TEST_VERSION" ]; then
+        echo "$CI_RPM_TEST_VERSION"
+        return 0
+    fi
+
     echo "$COMMIT_MESSAGE" |
-             sed -ne '/^RPM-test-version: */s/^[^:]*: *//Ip' 
+             sed -ne '/^RPM-test-version: */s/^[^:]*: *//Ip'
     return 0
 
 }
