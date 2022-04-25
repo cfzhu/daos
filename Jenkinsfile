@@ -41,6 +41,33 @@ def getuid() {
     return cached_uid
 }
 
+job_status = [:]
+
+def set_status(String name='', String value='') {
+    if (name == '') {
+        name = env.STAGE_NAME
+    }
+    if (value == '') {
+        value = currentBuild.currentResult
+    }
+    job_status[name] = value
+}
+
+def write_status() {
+    if (!env.DAOS_STACK_JOB_STATUS_DIR) {
+        return
+    }
+    String job_name = env.JOB_NAME.replace('/', '_')
+    job_name += '_' + env.BUILD_NUMBER
+    String file_name = env.DAOS_STACK_JOB_STATUS_DIR + '/' + job_name
+    job_status.each { k, v ->
+      String key = k.replace(' ', '_')
+      key = key.replace('.', '_')
+      sh(label: "Write jenkins_job_staus ${key}",
+         script: "echo '${key}: ${v}' >> ${file_name}")
+    }
+}
+
 pipeline {
     agent { label 'lightweight' }
 
@@ -169,13 +196,13 @@ pipeline {
                defaultValue: 'ci_nlt_1',
                description: "Label to use for NLT tests")
         string(name: 'CI_NVME_3_LABEL',
-               defaultValue: 'ci_nvme3',
+               defaultValue: 'wolf-230_nvme5',
                description: 'Label to use for 3 node NVMe tests')
         string(name: 'CI_NVME_5_LABEL',
-               defaultValue: 'ci_nvme5',
+               defaultValue: 'wolf-230_nvme5',
                description: 'Label to use for 5 node NVMe tests')
         string(name: 'CI_NVME_9_LABEL',
-               defaultValue: 'ci_nvme9',
+               defaultValue: 'wolf-230_nvme9',
                description: 'Label to use for 9 node NVMe tests')
         string(name: 'CI_STORAGE_PREP_LABEL',
                defaultValue: '',
@@ -191,12 +218,12 @@ pipeline {
                 }
             }
         }
-        stage('Cancel Previous Builds') {
+        /* stage('Cancel Previous Builds') {
             when { changeRequest() }
             steps {
                 cancelPreviousBuilds()
             }
-        }
+        } */
         stage('Pre-build') {
             when {
                 beforeAgent true
@@ -233,6 +260,7 @@ pipeline {
                     }
                     post {
                         always {
+                            set_status()
                             archiveArtifacts artifacts: 'pylint.log', allowEmptyArchive: true
                             /* when JENKINS-39203 is resolved, can probably use stepResult
                                here and remove the remaining post conditions
@@ -241,7 +269,13 @@ pipeline {
                                           result: ${currentBuild.currentResult}
                             */
                         }
-                        /* temporarily moved into stepResult due to JENKINS-39203
+                        /* temporarily moved some stuff into stepResult due to JENKINS-39203
+                        failure {
+                            githubNotify credentialsId: 'daos-jenkins-commit-status',
+                                         description: env.STAGE_NAME,
+                                         context: 'pre-build/' + env.STAGE_NAME,
+                                         status: 'ERROR'
+                        }
                         success {
                             githubNotify credentialsId: 'daos-jenkins-commit-status',
                                          description: env.STAGE_NAME,
@@ -253,14 +287,7 @@ pipeline {
                                          description: env.STAGE_NAME,
                                          context: 'pre-build/' + env.STAGE_NAME,
                                          status: 'FAILURE'
-                        }
-                        failure {
-                            githubNotify credentialsId: 'daos-jenkins-commit-status',
-                                         description: env.STAGE_NAME,
-                                         context: 'pre-build/' + env.STAGE_NAME,
-                                         status: 'ERROR'
-                        }
-                        */
+                        } */
                     }
                 } // stage('checkpatch')
                 stage('Python Bandit check') {
@@ -285,6 +312,7 @@ pipeline {
                             // find any issues.
                             junit testResults: 'bandit.xml',
                                   allowEmptyResults: true
+                            set_status()
                         }
                     }
                 } // stage('Python Bandit check')
@@ -333,6 +361,7 @@ pipeline {
                         }
                         cleanup {
                             buildRpmPost condition: 'cleanup'
+                            set_status()
                         }
                     }
                 }
@@ -368,6 +397,7 @@ pipeline {
                         }
                         cleanup {
                             buildRpmPost condition: 'cleanup'
+                            set_status()
                         }
                     }
                 }
@@ -403,6 +433,7 @@ pipeline {
                         }
                         cleanup {
                             buildRpmPost condition: 'cleanup'
+                            set_status()
                         }
                     }
                 }
@@ -438,6 +469,7 @@ pipeline {
                         }
                         cleanup {
                             buildRpmPost condition: 'cleanup'
+                            set_status()
                         }
                     }
                 }
@@ -471,6 +503,9 @@ pipeline {
                                   fi"""
                             archiveArtifacts artifacts: 'config.log-centos7-gcc',
                                              allowEmptyArchive: true
+                        }
+                        cleanup {
+                            set_status()
                         }
                     }
                 }
@@ -506,6 +541,9 @@ pipeline {
                             archiveArtifacts artifacts: 'config.log-centos7-covc',
                                              allowEmptyArchive: true
                         }
+                        cleanup {
+                            set_status()
+                        }
                     }
                 }
                 stage('Build on Leap 15 with Intel-C and TARGET_PREFIX') {
@@ -537,11 +575,14 @@ pipeline {
                             archiveArtifacts artifacts: 'config.log-leap15-intelc',
                                              allowEmptyArchive: true
                         }
+                        cleanup {
+                            set_status()
+                        }
                     }
                 }
             }
         }
-        stage('Unit Tests') {
+        /* stage('Unit Tests') {
             when {
                 beforeAgent true
                 expression { ! skipStage() }
@@ -563,6 +604,7 @@ pipeline {
                     post {
                       always {
                             unitTestPost artifacts: ['unit_test_logs/*']
+                            set_status()
                         }
                     }
                 }
@@ -595,6 +637,7 @@ pipeline {
                                          tool: issues(pattern: 'nlt-server-leaks.json',
                                            name: 'NLT server results',
                                            id: 'NLT_server')
+                            set_status()
                         }
                     }
                 }
@@ -621,6 +664,7 @@ pipeline {
                             unitTestPost ignore_failure: true,
                                          artifacts: ['covc_test_logs/*',
                                                      'covc_vm_test/**']
+                            set_status()
                         }
                     }
                 } // stage('Unit test Bullseye')
@@ -643,12 +687,13 @@ pipeline {
                             unitTestPost artifacts: ['unit_test_memcheck_logs.tar.gz',
                                                      'unit_test_memcheck_logs/*.log'],
                                          valgrind_stash: 'centos7-gcc-unit-memcheck'
+                            set_status()
                         }
                     }
                 } // stage('Unit Test with memcheck')
             }
-        }
-        stage('Test') {
+        } */
+        /* stage('Test') {
             when {
                 beforeAgent true
                 expression { ! skipStage() }
@@ -683,6 +728,9 @@ pipeline {
                         unsuccessful {
                             coverityPost condition: 'unsuccessful'
                         }
+                        cleanup {
+                            set_status()
+                        }
                     }
                 } // stage('Coverity on CentOS 7')
                 stage('Functional on CentOS 7') {
@@ -701,6 +749,7 @@ pipeline {
                     post {
                         always {
                             functionalTestPostV2()
+                            set_status()
                         }
                     }
                 } // stage('Functional on CentOS 7')
@@ -720,6 +769,7 @@ pipeline {
                     post {
                         always {
                             functionalTestPostV2()
+                            set_status()
                         }
                     }
                 } // stage('Functional on EL 8 with Valgrind')
@@ -739,6 +789,7 @@ pipeline {
                     post {
                         always {
                             functionalTestPostV2()
+                            set_status()
                         }
                     }
                 } // stage('Functional on EL 8')
@@ -758,6 +809,7 @@ pipeline {
                     post {
                         always {
                             functionalTestPostV2()
+                            set_status()
                         }
                     } // post
                 } // stage('Functional on Leap 15')
@@ -777,6 +829,7 @@ pipeline {
                     post {
                         always {
                             functionalTestPostV2()
+                            set_status()
                         }
                     } // post
                 } // stage('Functional on Ubuntu 20.04')
@@ -791,6 +844,11 @@ pipeline {
                     steps {
                         testRpm inst_repos: daosRepos(),
                                 daos_pkg_version: daosPackagesVersion(next_version)
+                   }
+                   post {
+                        cleanup {
+                            set_status()
+                        }
                    }
                 } // stage('Test CentOS 7 RPMs')
                 stage('Scan CentOS 7 RPMs') {
@@ -808,6 +866,7 @@ pipeline {
                     post {
                         always {
                             junit 'maldetect.xml'
+                            set_status()
                         }
                     }
                 } // stage('Scan CentOS 7 RPMs')
@@ -826,6 +885,7 @@ pipeline {
                     post {
                         always {
                             junit 'maldetect.xml'
+                            set_status()
                         }
                     }
                 } // stage('Scan EL 8 RPMs')
@@ -844,6 +904,7 @@ pipeline {
                     post {
                         always {
                             junit 'maldetect.xml'
+                            set_status()
                         }
                     }
                 } // stage('Scan Leap 15 RPMs')
@@ -890,11 +951,12 @@ pipeline {
                                                         id: 'NLT_client')]
                             junit testResults: 'nlt-junit.xml'
                             archiveArtifacts artifacts: 'nlt_logs/centos7.fault-injection/'
+                            set_status()
                         }
                     }
                 } // stage('Fault inection testing')
             } // parallel
-        } // stage('Test')
+        } */ // stage('Test')
         stage('Test Storage Prep') {
             when {
                 beforeAgent true
@@ -907,6 +969,12 @@ pipeline {
                 storagePrepTest inst_repos: daosRepos(),
                                 inst_rpms: functionalPackages(1, next_version)
             }
+            post {
+                cleanup {
+                    set_status()
+                }
+
+            }
         } // stage('Test Storage Prep')
         stage('Test Hardware') {
             when {
@@ -914,7 +982,7 @@ pipeline {
                 expression { ! skipStage() }
             }
             parallel {
-                stage('Functional Hardware Small') {
+                /* stage('Functional Hardware Small') {
                     when {
                         beforeAgent true
                         expression { ! skipStage() }
@@ -931,10 +999,11 @@ pipeline {
                     post {
                         always {
                             functionalTestPostV2()
+                            set_status()
                         }
                     }
-                } // stage('Functional_Hardware_Small')
-                stage('Functional Hardware Medium') {
+                } // stage('Functional_Hardware_Small') */
+                /* stage('Functional Hardware Medium') {
                     when {
                         beforeAgent true
                         expression { ! skipStage() }
@@ -951,9 +1020,10 @@ pipeline {
                     post {
                         always {
                             functionalTestPostV2()
+                            set_status()
                         }
                     }
-                } // stage('Functional_Hardware_Medium')
+                } // stage('Functional_Hardware_Medium') */
                 stage('Functional Hardware Large') {
                     when {
                         beforeAgent true
@@ -971,6 +1041,7 @@ pipeline {
                     post {
                         always {
                             functionalTestPostV2()
+                            set_status()
                         }
                     }
                 } // stage('Functional_Hardware_Large')
@@ -1005,17 +1076,22 @@ pipeline {
                                                                statementCoverage: 0],
                                             ignore_failure: true
                     }
+                    post {
+                        cleanup {
+                            set_status()
+                        }
+                    }
                 } // stage('Bullseye Report')
             } // parallel
         } // stage ('Test Report')
     } // stages
     post {
         always {
-            valgrindReportPublish valgrind_stashes: ['centos7-gcc-nlt-memcheck',
-                                                     'centos7-gcc-unit-memcheck']
+          set_status('final_status')
+          write_status()
+          /* valgrindReportPublish valgrind_stashes: ['centos7-gcc-nlt-memcheck',
+                                                   'centos7-gcc-unit-memcheck']
+          */
         }
-        unsuccessful {
-            notifyBrokenBranch branches: target_branch
-        }
-    } // post
+     } // post
 }

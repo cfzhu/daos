@@ -107,6 +107,10 @@ rm -f  /etc/yum/vars/releasever
 # and catted to the remote node along with this script
 post_provision_config_nodes
 
+if lspci | grep -i nvme; then
+  daos_server storage prepare -n --reset && rmmod vfio_pci && modprobe vfio_pci
+fi
+
 systemctl enable nfs-server.service
 systemctl start nfs-server.service
 sync
