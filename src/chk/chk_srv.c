@@ -14,45 +14,6 @@
 
 #include "chk_internal.h"
 
-static int
-chk_engine_start(uint64_t gen, uint32_t rank_nr, d_rank_t *ranks,
-		 uint32_t policy_nr, struct chk_policy **policies, uint32_t pool_nr,
-		 uuid_t pools[], uint32_t flags, int32_t exp_phase, d_rank_t leader,
-		 uint32_t *cur_phase, struct ds_pool_clues *clues)
-{
-	/* XXX: to be implemented in subsequent patch. */
-	return 0;
-}
-
-static int
-chk_engine_stop(uint64_t gen, uint32_t pool_nr, uuid_t pools[])
-{
-	/* XXX: to be implemented in subsequent patch. */
-	return 0;
-}
-
-static int
-chk_engine_query(uint64_t gen, uint32_t pool_nr, uuid_t pools[],
-		 uint32_t *shard_nr, struct chk_query_pool_shard **shards)
-{
-	/* XXX: to be implemented in subsequent patch. */
-	return 0;
-}
-
-static int
-chk_engine_mark_rank_dead(uint64_t gen, d_rank_t rank, uint32_t version)
-{
-	/* XXX: to be implemented in subsequent patch. */
-	return 0;
-}
-
-static int
-chk_engine_act(uint64_t gen, uint64_t seq, uint32_t cla, uint32_t act, uint32_t flags)
-{
-	/* XXX: to be implemented in subsequent patch. */
-	return 0;
-}
-
 static void
 ds_chk_start_hdlr(crt_rpc_t *rpc)
 {
@@ -158,11 +119,37 @@ ds_chk_act_hdlr(crt_rpc_t *rpc)
 static void
 ds_chk_report_hdlr(crt_rpc_t *rpc)
 {
+	struct chk_report_in	*cri = crt_req_get(rpc);
+	struct chk_report_out	*cro = crt_reply_get(rpc);
+	int			 rc;
+
+	rc = chk_leader_report(cri->cri_gen, cri->cri_ics_class, cri->cri_ics_action,
+			       cri->cri_ics_result, cri->cri_rank, cri->cri_target,
+			       &cri->cri_pool, &cri->cri_cont, &cri->cri_obj,
+			       &cri->cri_dkey, &cri->cri_akey, cri->cri_msg,
+			       cri->cri_options.ca_count, cri->cri_options.ca_arrays,
+			       cri->cri_details.ca_count, cri->cri_details.ca_arrays,
+			       false, &cro->cro_seq);
+
+	cro->cro_status = rc;
+	rc = crt_reply_send(rpc);
+	if (rc != 0)
+		D_ERROR("Failed to reply check report: "DF_RC"\n", DP_RC(rc));
 }
 
 static void
 ds_chk_rejoin_hdlr(crt_rpc_t *rpc)
 {
+	struct chk_rejoin_in	*cri = crt_req_get(rpc);
+	struct chk_rejoin_out	*cro = crt_reply_get(rpc);
+	int			 rc;
+
+	rc = chk_leader_rejoin(cri->cri_gen, cri->cri_rank, cri->cri_phase);
+
+	cro->cro_status = rc;
+	rc = crt_reply_send(rpc);
+	if (rc != 0)
+		D_ERROR("Failed to reply check rejoin: "DF_RC"\n", DP_RC(rc));
 }
 
 static int
@@ -206,16 +193,35 @@ ds_chk_setup(void)
 	if (rc != 0)
 		goto out_vos;
 
+	rc = chk_engine_init();
+	if (rc != 0)
+		goto out_leader;
+
+	/*
+	 * Currently, we do NOT support leader to rejoin the former check instance. Because we do
+	 * not support leader switch, during current leader down time, the reported inconsistency
+	 * and related repair result are lost. Under such case, the admin has to stop and restart
+	 * the check explicitly.
+	 */
+
+	chk_engine_rejoin();
+
+	goto out_done;
+
+out_leader:
+	chk_leader_fini();
 out_vos:
 	chk_vos_fini();
-
+out_done:
 	return rc;
 }
 
 static int
 ds_chk_cleanup(void)
 {
+	chk_engine_pause();
 	chk_leader_pause();
+	chk_engine_fini();
 	chk_leader_fini();
 	chk_vos_fini();
 

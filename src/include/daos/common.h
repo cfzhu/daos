@@ -911,6 +911,7 @@ int daos_prop_entry_copy(struct daos_prop_entry *entry,
 			 struct daos_prop_entry *entry_dup);
 daos_recx_t *daos_recx_alloc(uint32_t nr);
 void daos_recx_free(daos_recx_t *recx);
+int path_gen(const uuid_t pool_uuid, const char *dir, const char *fname, int *idx, char **fpath);
 
 static inline void
 daos_parse_ctype(const char *string, daos_cont_layout_t *type)
