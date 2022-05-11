@@ -19,7 +19,7 @@ def scons():
 
     # chk
     chk = daos_build.library(denv, 'chk',
-                             [chk_pb, 'chk_srv.c', 'chk_common.c'],
+                             [chk_pb, 'chk_srv.c', 'chk_common.c', 'chk_vos.c'],
                              install_off="../..")
     denv.Install('$PREFIX/lib64/daos_srv', chk)
 
