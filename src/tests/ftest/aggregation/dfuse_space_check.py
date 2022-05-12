@@ -1,11 +1,12 @@
 #!/usr/bin/python
 """
-  (C) Copyright 2020-2021 Intel Corporation.
+  (C) Copyright 2020-2022 Intel Corporation.
 
   SPDX-License-Identifier: BSD-2-Clause-Patent
 """
 
 import time
+import os
 from ior_test_base import IorTestBase
 
 
@@ -19,7 +20,7 @@ class DfuseSpaceCheck(IorTestBase):
     def __init__(self, *args, **kwargs):
         """Initialize a DfuseSpaceCheck object."""
         super().__init__(*args, **kwargs)
-        self.space_before = None
+        self.initial_space = None
         self.block_size = None
 
     def get_nvme_free_space(self, display=True):
@@ -38,18 +39,24 @@ class DfuseSpaceCheck(IorTestBase):
 
         return free_space_nvme
 
-    def check_aggregation(self):
-        """Check Aggregation for 240 secs max, else fail the test."""
-        counter = 1
-        while self.get_nvme_free_space() != self.space_before:
-            # try to wait for 4 x 60 secs for aggregation to be completed or
-            # else exit the test with a failure.
-            if counter > 4:
-                self.log.info("Free space when test terminated: %s",
-                              self.get_nvme_free_space())
-                self.fail("Aggregation did not complete as expected")
-            time.sleep(60)
-            counter += 1
+    def wait_for_aggregation(self, retries=4, interval=60):
+        """Wait for aggregation to finish.
+
+        Args:
+            retries (int, optional): number of times to retry.
+                Default is 4.
+            interval (int, optional): seconds to wait before retrying.
+                Default is 60.
+
+        """
+        for _ in range(retries):
+            current_space = self.get_nvme_free_space()
+            if current_space == self.initial_space:
+                return
+            time.sleep(interval)
+
+        self.log.info("Free space when test terminated: %s", current_space)
+        self.fail("Aggregation did not complete within {} seconds".format(retries * interval))
 
     def write_multiple_files(self):
         """Write multiple files.
@@ -89,52 +96,50 @@ class DfuseSpaceCheck(IorTestBase):
             return all the space back.
             Now create small files again until pool is out of space and check,
             whether out of space happens at the same file count as before.
-        :avocado: tags=all,hw,daosio,small,full_regression,dfusespacecheck
+        :avocado: tags=all,full_regression
+        :avocado: tags=hw,small
+        :avocado: tags=aggregation,daosio,dfuse
+        :avocado: tags=dfusespacecheck
         """
         # get test params for cont and pool count
-        self.block_size = self.params.get("block_size",
-                                          '/run/dfusespacecheck/*')
+        self.block_size = self.params.get('block_size', '/run/dfusespacecheck/*')
 
-        # Create a pool, container and start dfuse.
+        # Create a pool, container, and start dfuse
         self.create_pool()
         self.create_cont()
         self.start_dfuse(self.hostlist_clients, self.pool, self.container)
 
-        # get scm space before write
-        self.space_before = self.get_nvme_free_space()
+        # get nvme space before write
+        self.initial_space = self.get_nvme_free_space()
 
-        # create large file and perform write to it so that if goes out of
-        # space.
-        large_file = str(self.dfuse.mount_dir.value + "/" + "largefile.txt")
-        cmd = "touch {}".format(large_file)
-        self.execute_cmd(cmd)
-        dd_count = ((self.space_before / self.block_size) + 1)
+        # Create a file as large as we can
+        large_file = os.path.join(self.dfuse.mount_dir.value, 'largefile.txt')
+        self.execute_cmd('touch {}'.format(large_file))
+        dd_count = (self.initial_space // self.block_size) + 1
         write_dd_cmd = "dd if=/dev/zero of={} bs={} count={}".format(
             large_file, self.block_size, dd_count)
         self.execute_cmd(write_dd_cmd, False)
 
-        # store free space after write and remove the file
-        rm_large_file = "rm -rf {}".format(large_file)
-        self.execute_cmd(rm_large_file)
+        # Remove the file
+        self.execute_cmd('rm -rf {}'.format(large_file))
 
-        # Check if aggregation is complete.
-        self.check_aggregation()
+        # Wait for aggregation to complete
+        self.wait_for_aggregation()
 
-        # Once aggregation is complete, write multiple files of small size
-        # until pool is out of space and store how many files were created.
+        # Write small files until we run out of space
         file_count1 = self.write_multiple_files()
 
         # remove all the small files created above.
-        self.execute_cmd("rm -rf {}/*".format(self.dfuse.mount_dir.value))
+        self.execute_cmd("rm -rf {}".format(os.path.join(self.dfuse.mount_dir.value, '*')))
 
-        # Check for aggregation to complete after file removal.
-        self.check_aggregation()
+        # Wait for aggregation to complete after file removal
+        self.wait_for_aggregation()
 
-        # Write small sized multiple files again until pool is out of space
-        # and store the number of files created.
+        # Write small files again until we run out of space
+        # and verify that we wrote at least as many as file_count1
         file_count2 = self.write_multiple_files()
-
-        # Check if both the files counts is equal. If not, fail the test.
-        if file_count1 != file_count2:
-            self.fail("Space was not returned completely after re-writing the "
-                      "same number of files after deletion")
+        self.log.info('file_count1 = %s', file_count1)
+        self.log.info('file_count2 = %s', file_count2)
+        self.assertGreaterEqual(
+            file_count2, file_count1,
+            'Space was not returned. Expected to write at least {} files'.format(file_count1))
