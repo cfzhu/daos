@@ -67,7 +67,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        distro: [rocky, fedora, leap.15]
+        distro: [rocky, fedora, leap.15, alma.9]
         compiler: [clang, gcc]
         include:
           - distro: rocky
@@ -79,6 +79,9 @@ jobs:
           - distro: leap.15
             base: leap.15
             with: leap.15
+          - distro: alma.9
+            base: el.9
+            with: almalinux:9
     env:
       DEPS_JOBS: 10
       BASE_DISTRO: ${{ matrix.with }}
