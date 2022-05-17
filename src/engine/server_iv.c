@@ -465,6 +465,16 @@ iv_on_update_internal(crt_iv_namespace_t ivns, crt_iv_key_t *iv_key,
 		entry = priv_entry->entry;
 	}
 
+	if (entry->iv_key.eph > key.eph && key.eph != 0) {
+		/* If incoming key/eph is older than the current entry/key, then it means
+		 * incoming update request is stale, especially for LAZY/asynchronous/retry
+		 * cases, see iv_op().
+		 */
+		D_DEBUG(DB_MD, "current entry eph "DF_U64" > "DF_U64"\n",
+			entry->iv_key.eph, key.eph);
+		D_GOTO(output, rc);
+	}
+
 	if (refresh) {
 		rc = refresh_iv_value(entry, &key, iv_value, ref_rc,
 				      priv_entry ? priv_entry->priv : NULL);
@@ -1176,6 +1186,7 @@ ds_iv_update(struct ds_iv_ns *ns, struct ds_iv_key *key, d_sg_list_t *value,
 	iv_sync.ivs_event = CRT_IV_SYNC_EVENT_UPDATE;
 	iv_sync.ivs_mode = sync_mode;
 	iv_sync.ivs_flags = sync_flags;
+	key->eph = crt_hlc_get();
 	rc = iv_op(ns, key, value, &iv_sync, shortcut, retry, IV_UPDATE);
 	return rc;
 }
@@ -1203,6 +1214,6 @@ ds_iv_invalidate(struct ds_iv_ns *ns, struct ds_iv_key *key,
 	iv_sync.ivs_event = CRT_IV_SYNC_EVENT_NOTIFY;
 	iv_sync.ivs_mode = sync_mode;
 	iv_sync.ivs_flags = sync_flags;
-
+	key->eph = crt_hlc_get();
 	return iv_op(ns, key, NULL, &iv_sync, shortcut, retry, IV_INVALIDATE);
 }
