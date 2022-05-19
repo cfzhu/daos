@@ -65,7 +65,7 @@ class _env_module(): # pylint: disable=invalid-name
         if sys.version_info[0] > 2:
             ns = {}
             exec(stdout.decode(), ns) # nosec
-
+            return "123"
             return ns['_mlstatus'], stderr.decode()
 
         # Should not get to this point.

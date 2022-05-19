@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause-Patent
  */
 #define D_LOGFAC DD_FAC(csum)
-
+#define HAVE_QAT
 #ifdef HAVE_QAT
 
 #include <stdio.h>

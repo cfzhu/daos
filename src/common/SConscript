@@ -16,7 +16,7 @@ def build_daos_common(env, client, prereqs):
     """ Building non-pmem version for client's common lib"""
     denv = env.Clone()
 
-    common_libs = ['isal', 'isal_crypto', 'cart', 'gurt', 'lz4', 'protobuf-c', 'uuid', 'pthread']
+    common_libs = ['isal', 'isal_crypto', 'cart', 'gurt', 'lz4', 'protobuf-c', 'uuid', 'pthread', 'qat_s', 'usdm_drv_s']
     if client:
         libname = 'libdaos_common'
     else:
@@ -26,6 +26,7 @@ def build_daos_common(env, client, prereqs):
         libname = 'libdaos_common_pmem'
         prereqs.require(denv, 'pmdk')
 
+    denv.Append(CPPFLAGS="-I/home/taorong/qat/quickassist/include -I/home/taorong/qat/quickassist/include/dc -I/home/taorong/qat/quickassist/lookaside/access_layer/include -I/home/taorong/qat/quickassist/utilities/libusdm_drv")
     common = daos_build.library(denv, libname, COMMON_FILES, LIBS=common_libs)
     denv.Install('$PREFIX/lib64/', common)
     return common

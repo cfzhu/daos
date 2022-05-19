@@ -15,6 +15,7 @@
 #include <daos/common.h>
 #include <daos/compression.h>
 
+#define HAVE_QAT
 #ifdef HAVE_QAT
 #include <qat.h>
 /**
