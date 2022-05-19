@@ -25,6 +25,10 @@
 /* caller doesn't specify a value */
 #define MAX_BUF_SIZE 65536
 
+/** The QAT device status */
+#define QAT_STOP 0
+#define QAT_START 1
+
 struct callback_data {
 	CpaDcRqResults *dcResults;
 	CpaBufferList *pBufferListSrc;
@@ -36,6 +40,15 @@ struct callback_data {
 };
 
 static int inst_num;
+
+/** The number of qat compressor */
+static int qat_compressor_num;
+
+/** The status of qat device, it can be set to QAT_STOP or QAT_START*/
+static int qat_status;
+
+/** The thread lock of qat device */
+static pthread_mutex_t qat_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /** Memory */
 static inline CpaStatus
@@ -192,23 +205,33 @@ qat_dc_init(CpaInstanceHandle *dcInstHandle,
 
 	*numInterBuffLists = 0;
 
-	status = qaeMemInit();
-	if (status != CPA_STATUS_SUCCESS) {
-		D_ERROR("QAT: Failed to initialize memory driver\n");
-		return DC_STATUS_ERR;
-	}
+	pthread_mutex_lock(&qat_mutex);
 
-	status = icp_sal_userStartMultiProcess("SSL", CPA_FALSE);
-	if (status != CPA_STATUS_SUCCESS) {
-		D_ERROR("QAT: Failed to start user process SSL\n");
-		qaeMemDestroy();
-		return DC_STATUS_ERR;
+	if (qat_status == QAT_STOP) {
+		status = qaeMemInit();
+		if (status != CPA_STATUS_SUCCESS) {
+			D_ERROR("QAT: Failed to initialize memory driver\n");
+			pthread_mutex_unlock(&qat_mutex);
+			return DC_STATUS_ERR;
+		}
+
+		status = icp_sal_userStartMultiProcess("SSL", CPA_FALSE);
+		if (status != CPA_STATUS_SUCCESS) {
+			D_ERROR("QAT: Failed to start user process SSL\n");
+			qaeMemDestroy();
+			pthread_mutex_unlock(&qat_mutex);
+			return DC_STATUS_ERR;
+		}
+		qat_status = QAT_START;
 	}
 
 	get_dc_instance(dcInstHandle);
 	if (*dcInstHandle == NULL) {
 		D_ERROR("QAT: No DC instance\n");
+		icp_sal_userStop();
 		qaeMemDestroy();
+		qat_status = QAT_STOP;
+		pthread_mutex_unlock(&qat_mutex);
 		return DC_STATUS_ERR;
 	}
 
@@ -295,8 +318,13 @@ qat_dc_init(CpaInstanceHandle *dcInstHandle,
 
 	*bufferInterArrayPtr = interBufs;
 
-	if (status == CPA_STATUS_SUCCESS)
+	if (status == CPA_STATUS_SUCCESS) {
+		qat_compressor_num++;
+		pthread_mutex_unlock(&qat_mutex);
 		return DC_STATUS_OK;
+	}
+
+	pthread_mutex_unlock(&qat_mutex);
 
 	qat_dc_destroy(dcInstHandle, sessionHdl,
 		       interBufs, *numInterBuffLists);
@@ -470,6 +498,8 @@ qat_dc_destroy(CpaInstanceHandle *dcInstHandle,
 {
 	int i = 0;
 
+	pthread_mutex_lock(&qat_mutex);
+
 	cpaDcRemoveSession(*dcInstHandle, *sessionHdl);
 
 	cpaDcStopInstance(*dcInstHandle);
@@ -491,9 +521,15 @@ qat_dc_destroy(CpaInstanceHandle *dcInstHandle,
 		mem_free_contig((void *)&interBufs);
 	}
 
-	icp_sal_userStop();
+	qat_compressor_num--;
 
-	qaeMemDestroy();
+	if (qat_compressor_num == 0 && qat_status == QAT_START) {
+		icp_sal_userStop();
+		qaeMemDestroy();
+		qat_status = QAT_STOP;
+	}
+
+	pthread_mutex_unlock(&qat_mutex);
 
 	return 0;
 }
