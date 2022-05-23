@@ -28,6 +28,7 @@
 struct deflate_ctx {
 	CpaInstanceHandle	dc_inst_hdl;
 	CpaDcSessionHandle	session_hdl;
+	CpaInstanceInfo2	inst_info;
 
 	CpaBufferList		**inter_bufs;
 	Cpa16U			num_inter_bufs;
@@ -60,8 +61,8 @@ deflate_init(void **daos_dc_ctx, uint16_t level,
 
 	rc = qat_dc_init(
 		&ctx->dc_inst_hdl, &ctx->session_hdl,
-		&ctx->num_inter_bufs, &ctx->inter_bufs,
-		max_buf_size,
+		&ctx->inst_info, &ctx->num_inter_bufs,
+		&ctx->inter_bufs, max_buf_size,
 		qat_dc_level[dc_level_index]);
 
 	*daos_dc_ctx = ctx;
@@ -77,6 +78,7 @@ deflate_compress(void *daos_dc_ctx, uint8_t *src, size_t src_len,
 	return qat_dc_compress(
 		&ctx->dc_inst_hdl,
 		&ctx->session_hdl,
+		&ctx->inst_info,
 		src, src_len,
 		dst, dst_len, produced, DIR_COMPRESS);
 }
@@ -90,6 +92,7 @@ deflate_decompress(void *daos_dc_ctx, uint8_t *src, size_t src_len,
 	return qat_dc_compress(
 		&ctx->dc_inst_hdl,
 		&ctx->session_hdl,
+		&ctx->inst_info,
 		src, src_len,
 		dst, dst_len, produced, DIR_DECOMPRESS);
 }
@@ -104,6 +107,7 @@ deflate_compress_async(void *daos_dc_ctx, uint8_t *src, size_t src_len,
 	return qat_dc_compress_async(
 		&ctx->dc_inst_hdl,
 		&ctx->session_hdl,
+		&ctx->inst_info,
 		src, src_len,
 		dst, dst_len, DIR_COMPRESS,
 		cb_fn, cb_data);
@@ -119,6 +123,7 @@ deflate_decompress_async(void *daos_dc_ctx, uint8_t *src, size_t src_len,
 	return qat_dc_compress_async(
 		&ctx->dc_inst_hdl,
 		&ctx->session_hdl,
+		&ctx->inst_info,
 		src, src_len,
 		dst, dst_len, DIR_DECOMPRESS,
 		cb_fn, cb_data);

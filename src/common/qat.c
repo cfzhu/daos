@@ -33,6 +33,7 @@ struct callback_data {
 	CpaDcRqResults *dcResults;
 	CpaBufferList *pBufferListSrc;
 	CpaBufferList *pBufferListDst;
+	Cpa32U SVM_enabled;
 	uint8_t *dst;
 	size_t dstLen;
 	dc_callback_fn user_cb_fn;
@@ -129,7 +130,8 @@ dc_callback(void *pCallbackTag, CpaStatus status)
 		produced = cb_data->dcResults->produced;
 		if (status == CPA_DC_OK &&
 		    produced > 0 &&
-		    produced <= cb_data->dstLen) {
+		    produced <= cb_data->dstLen &&
+		    !cb_data->SVM_enabled) {
 			/* Copy output from pinned-mem to virtual-mem */
 			memcpy(cb_data->dst,
 			       cb_data->pBufferListDst->pBuffers->pData,
@@ -142,17 +144,22 @@ dc_callback(void *pCallbackTag, CpaStatus status)
 				dc_status = DC_STATUS_ERR;
 		}
 
-		/** Free memory */
-		mem_free_contig(
-			(void *)&cb_data->pBufferListSrc->pPrivateMetaData);
-		mem_free_contig(
-			(void *)&cb_data->pBufferListSrc->pPrivateMetaData);
-		mem_free_contig(
-			(void *)&cb_data->pBufferListSrc->pBuffers->pData);
-		mem_free_contig(
-			(void *)&cb_data->pBufferListDst->pPrivateMetaData);
-		mem_free_contig(
-			(void *)&cb_data->pBufferListDst->pBuffers->pData);
+		if (!cb_data->SVM_enabled) {
+			/** Free memory */
+			mem_free_contig(
+				(void *)&cb_data->pBufferListSrc->pPrivateMetaData);
+			mem_free_contig(
+				(void *)&cb_data->pBufferListSrc->pPrivateMetaData);
+			mem_free_contig(
+				(void *)&cb_data->pBufferListSrc->pBuffers->pData);
+			mem_free_contig(
+				(void *)&cb_data->pBufferListDst->pPrivateMetaData);
+			mem_free_contig(
+				(void *)&cb_data->pBufferListDst->pBuffers->pData);
+		} else {
+			D_FREE(cb_data->pBufferListSrc->pPrivateMetaData);
+			D_FREE(cb_data->pBufferListDst->pPrivateMetaData);
+		}
 		D_FREE(cb_data->pBufferListSrc);
 		D_FREE(cb_data->pBufferListDst);
 		D_FREE(cb_data->dcResults);
@@ -189,6 +196,7 @@ qat_dc_poll_response(CpaInstanceHandle *dcInstHandle)
 int
 qat_dc_init(CpaInstanceHandle *dcInstHandle,
 	    CpaDcSessionHandle *sessionHdl,
+	    CpaInstanceInfo2 *inst_info,
 	    Cpa16U *numInterBuffLists,
 	    CpaBufferList ***bufferInterArrayPtr,
 	    Cpa32U maxBufferSize,
@@ -235,8 +243,12 @@ qat_dc_init(CpaInstanceHandle *dcInstHandle,
 		return DC_STATUS_ERR;
 	}
 
+	status = cpaDcInstanceGetInfo2(*dcInstHandle, inst_info);
 
-	status = cpaDcBufferListGetMetaSize(*dcInstHandle, 1, &buffMetaSize);
+	if (status == CPA_STATUS_SUCCESS) {
+		status = cpaDcBufferListGetMetaSize(*dcInstHandle, 1,
+				&buffMetaSize);
+	}
 
 	if (status == CPA_STATUS_SUCCESS)
 		status = cpaDcGetNumIntermediateBuffers(
@@ -335,6 +347,7 @@ int
 qat_dc_compress_async(
 		CpaInstanceHandle *dcInstHandle,
 		CpaDcSessionHandle *sessionHdl,
+		CpaInstanceInfo2 *inst_info,
 		uint8_t *src,
 		size_t srcLen,
 		uint8_t *dst,
@@ -355,7 +368,10 @@ qat_dc_compress_async(
 	CpaDcRqResults *dcResults;
 	CpaDcOpData opData = {};
 	Cpa32U numBuffers = 1;
+	Cpa32U SVM_enabled = 0;
 	struct callback_data *cb_data;
+
+	SVM_enabled = !inst_info->requiresPhysicallyContiguousMemory;
 
 	D_ALLOC(cb_data, sizeof(struct callback_data));
 	D_ALLOC(dcResults, sizeof(CpaDcRqResults));
@@ -365,6 +381,7 @@ qat_dc_compress_async(
 	cb_data->dstLen = dstLen;
 	cb_data->user_cb_fn = user_cb_fn;
 	cb_data->user_cb_data = user_cb_data;
+	cb_data->SVM_enabled = SVM_enabled;
 
 	Cpa32U bufferListMemSize =
 		sizeof(CpaBufferList) + (numBuffers * sizeof(CpaFlatBuffer));
@@ -376,37 +393,55 @@ qat_dc_compress_async(
 			numBuffers,
 			&bufferMetaSize);
 
-	/* Allocate source buffer */
-	if (status == CPA_STATUS_SUCCESS)
-		status = mem_alloc_contig(
-				(void *)&pBufferMetaSrc, bufferMetaSize, 1);
+	if (!SVM_enabled) {
+		/* Allocate source buffer */
+		if (status == CPA_STATUS_SUCCESS)
+			status = mem_alloc_contig(
+					(void *)&pBufferMetaSrc, bufferMetaSize, 1);
 
+		if (status == CPA_STATUS_SUCCESS)
+			status = mem_alloc_contig((void *)&pSrcBuffer, srcLen, 1);
+
+		/* Allocate destination buffer the same size as source buffer */
+		if (status == CPA_STATUS_SUCCESS)
+			status = mem_alloc_contig(
+					(void *)&pBufferMetaDst, bufferMetaSize, 1);
+
+		if (status == CPA_STATUS_SUCCESS)
+			status = mem_alloc_contig((void *)&pDstBuffer, dstLen, 1);
+
+		/* Copy source into buffer */
+		memcpy(pSrcBuffer, src, srcLen);
+	} else {
+
+		if (status == CPA_STATUS_SUCCESS) {
+			D_ALLOC(pBufferMetaSrc, bufferMetaSize);
+			status = pBufferMetaSrc ? CPA_STATUS_SUCCESS :
+				CPA_STATUS_FAIL;
+		}
+		if (status == CPA_STATUS_SUCCESS) {
+			D_ALLOC(pBufferMetaDst, bufferMetaSize);
+			status = pBufferMetaDst ? CPA_STATUS_SUCCESS :
+				CPA_STATUS_FAIL;
+		}
+		pSrcBuffer = src;
+		pDstBuffer = dst;
+	}
 
 	if (status == CPA_STATUS_SUCCESS) {
 		D_ALLOC(pBufferListSrc, bufferListMemSize);
 		status = pBufferListSrc ? CPA_STATUS_SUCCESS : CPA_STATUS_FAIL;
 	}
-	if (status == CPA_STATUS_SUCCESS)
-		status = mem_alloc_contig((void *)&pSrcBuffer, srcLen, 1);
-
-	/* Allocate destination buffer the same size as source buffer */
-	if (status == CPA_STATUS_SUCCESS)
-		status = mem_alloc_contig(
-				(void *)&pBufferMetaDst, bufferMetaSize, 1);
 
 	if (status == CPA_STATUS_SUCCESS) {
 		D_ALLOC(pBufferListDst, bufferListMemSize);
 		status = pBufferListDst ? CPA_STATUS_SUCCESS : CPA_STATUS_FAIL;
 	}
-	if (status == CPA_STATUS_SUCCESS)
-		status = mem_alloc_contig((void *)&pDstBuffer, dstLen, 1);
 
 	cb_data->pBufferListSrc = pBufferListSrc;
 	cb_data->pBufferListDst = pBufferListDst;
 
 	if (status == CPA_STATUS_SUCCESS) {
-		/* Copy source into buffer */
-		memcpy(pSrcBuffer, src, srcLen);
 
 		/* Build source bufferList */
 		pFlatBuffer = (CpaFlatBuffer *)(pBufferListSrc + 1);
@@ -460,6 +495,7 @@ qat_dc_compress_async(
 int
 qat_dc_compress(CpaInstanceHandle *dcInstHandle,
 		CpaDcSessionHandle *sessionHdl,
+		CpaInstanceInfo2 *inst_info,
 		uint8_t *src,
 		size_t srcLen,
 		uint8_t *dst,
@@ -470,7 +506,7 @@ qat_dc_compress(CpaInstanceHandle *dcInstHandle,
 	int user_cb_data = 0;
 	CpaStatus status = CPA_STATUS_SUCCESS;
 
-	status = qat_dc_compress_async(dcInstHandle, sessionHdl,
+	status = qat_dc_compress_async(dcInstHandle, sessionHdl, inst_info,
 				       src, srcLen, dst, dstLen, dir,
 				       user_callback, (void *)&user_cb_data);
 
